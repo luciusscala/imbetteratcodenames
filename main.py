@@ -60,8 +60,28 @@ class Board:
         for i in range(len(array)):
             array[i].print_word()
 
-def clue_scores(candidates, board, model):
-    pass
+def clue_scores(team, candidates, board, model):
+    scores = {}
+
+    #set team and opposing team words
+    if team == "blue":
+        my_team = board.blue
+        opposing_team = board.red
+    else:
+        my_team = board.red
+        opposing_team = board.blue
+    
+    for clue in candidates:
+        #calculate how similar to team words
+        team_similarity = sum(model.similarity(clue, word.word) for word in my_team)
+
+        #calculate how different from opposing words and assasain (using max similarity of all words)
+        max_non_team_similarity = max([model.similarity(clue, word.word) for word in opposing_team + board.black])
+
+        #scoring function
+        scores[clue] = team_similarity / (max_non_team_similarity + 1e-6)  # Avoid division by zero
+   
+    return scores
 
 def main():
     """
@@ -69,9 +89,12 @@ def main():
     """
     file_path = "words.txt"
     with open(file_path, "r") as file:
-        words = [line.strip() for line in file][:25]
+        words = [line.strip() for line in file]
 
-    board = Board(words)
+    #select 30 random words out of all words in txt (game only needs 25)
+    random_words = random.sample(words, 30)
+
+    board = Board(random_words)
 
 
     # Path to the downloaded model
@@ -81,18 +104,35 @@ def main():
     word2vec = KeyedVectors.load_word2vec_format(model_path, binary=True)
 
     #get input on which team to be spy master for
-    input = str(input("Red or Blue? ")).lower()
+    user_input = str(input("Red or Blue? ")).lower()
 
-    if input == "red":
-        candidates = word2vec.most_similar(positive=board.red, topn=100)
+    if user_input == "red":
+        team = [word.word for word in board.red]
+        board.print(board.red)
     else:
-        candidates = word2vec.most_similar(positive=board.blue, topn=100)
+        team = [word.word for word in board.blue]
+        board.print(board.blue)
+    
+    #filter out words not in model vocab
+    valid_words = [word for word in team if word in word2vec.key_to_index]
+
+    if not valid_words:
+        print("No valid words from the team are present in the model's vocabulary.")
+        return
+
+    # Get the most similar words for the valid team words
+    candidates = word2vec.most_similar(positive=valid_words, topn=100)
+
 
     #a list of the candidate words which are not in board list of words
     filtered_candidates = [word for word, _ in candidates if word not in board.list]
 
+    #find best clue
+    best_clues = clue_scores(user_input, filtered_candidates, board, word2vec)
+    best_clue = max(best_clues)
 
-    board.print(board.red)
+    #display results
+    print(best_clue)
 
 if __name__ == "__main__":
     main()
