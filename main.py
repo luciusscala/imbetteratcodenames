@@ -121,11 +121,13 @@ def main():
         return
 
     # Get the most similar words for the valid team words
-    candidates = word2vec.most_similar(positive=valid_words, topn=100)
+    candidates = word2vec.most_similar(positive=valid_words, topn=200)
 
 
     #a list of the candidate words which are not in board list of words
     filtered_candidates = [word for word, _ in candidates if word not in board.list]
+    filtered_candidates = [word for word in filtered_candidates if "_" not in word]
+    print(filtered_candidates)
 
     #find best clue
     best_clues = clue_scores(user_input, filtered_candidates, board, word2vec)
