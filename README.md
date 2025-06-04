@@ -1,5 +1,7 @@
-<<<<<<< HEAD
+
 # Codenames Spymaster (Python, PyQt5 & Word2Vec)
+
+***note*** this readme was written by Chat
 
 A complete Codenames board game experience with both a professional, interactive GUI (PyQt5) and a command-line spymaster clue research tool (leveraging Word2Vec).  
 Modular, easy to extend, and perfect for both gameplay and computational linguistics experimentation.
