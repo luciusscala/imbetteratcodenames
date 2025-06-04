@@ -1,142 +1,160 @@
 import random
+from typing import List, Dict, Tuple
 from gensim.models import KeyedVectors
 
 class Word:
     """
-    Word class that defines the properties of each word in the game
+    Represents a game word and its assigned color/team.
     """
-    def __init__(self, word, color):
+    def __init__(self, word: str, color: str):
         self.word = word.lower()
         self.color = color
-    
+
+    def __repr__(self):
+        return f"Word(word='{self.word}', color='{self.color}')"
+
     def print_word(self):
-        print(self.word + " " + self.color)
-    
+        print(f"{self.word} ({self.color})")
+
+
 class Board:
-    """
-    Board class that assigns a list of words to the colors/teams of the game
-    """
-    #constants
+    """Represents the codenames board containing all card assignments."""
+
+    # Team/color constants
     RED_TEAM = "red"
     BLUE_TEAM = "blue"
     BYSTANDER = "tan"
-    ASSASAIN = "black"
+    ASSASSIN = "black"
 
-    #constructor
-    def __init__(self, words):
-        self.red = []
-        self.blue = []
-        self.tan = []
-        self.black = []
-        self.list = self.set_words(words)
-        
-    #method: assigns words to colors
-    def set_words(self, words):
-        colors = [self.BYSTANDER] * 7 + [self.ASSASAIN] * 1 + [self.RED_TEAM] * 8 + [self.BLUE_TEAM] * 9
-        random.shuffle(colors)
+    def __init__(self, words: List[str]):
+        """
+        Initializes board by randomly assigning words to colors according to Codenames rules.
+        - 9x blue, 8x red, 7x bystander, 1x assassin
+        """
+        # Set up color assignments to ensure correct distribution
+        colors = (
+            [self.BLUE_TEAM] * 9 +
+            [self.RED_TEAM] * 8 +
+            [self.BYSTANDER] * 7 +
+            [self.ASSASSIN] * 1
+        )
+        random.shuffle(colors)  # Randomize color distribution
 
-        #set each word with a random color
-        list = []
-        for i in range(len(colors)):
-            word = Word(words[i], colors[i])
-            list.append(word)
-            
-            #add to other variables
-            if colors[i] == self.RED_TEAM:
-                self.red.append(word)
-            elif colors[i] == self.BLUE_TEAM:
-                self.blue.append(word)
-            elif colors[i] == self.BYSTANDER:
-                self.tan.append(word)
-            else:
-                self.black.append(word)
-            
-        
-        return list
-    
-    #method: prints
-    def print(self, array):
-        #assumes array of Word objects
-        for i in range(len(array)):
-            array[i].print_word()
+        # Assign each word its color
+        self.words: List[Word] = []
+        self.teams: Dict[str, List[Word]] = {self.RED_TEAM: [], self.BLUE_TEAM: [], self.BYSTANDER: [], self.ASSASSIN: []}
+        for w, c in zip(words, colors):
+            word_obj = Word(w, c)
+            self.words.append(word_obj)
+            self.teams[c].append(word_obj)
 
-def clue_scores(team, candidates, board, model):
+    def print_team_words(self):
+        """Prints out all words by team, for debug."""
+        print("Blue words:")
+        for word in self.teams[self.BLUE_TEAM]:
+            print(f"  {word.word}")
+        print("Red words:")
+        for word in self.teams[self.RED_TEAM]:
+            print(f"  {word.word}")
+        print("Bystanders:")
+        for word in self.teams[self.BYSTANDER]:
+            print(f"  {word.word}")
+        print("Assassin:")
+        for word in self.teams[self.ASSASSIN]:
+            print(f"  {word.word}")
+
+    def get_team_words(self, team: str) -> List[str]:
+        """Returns all word strings for a given team."""
+        return [w.word for w in self.teams[team]]
+
+    def get_all_board_words(self) -> List[str]:
+        """Returns all words on the board."""
+        return [w.word for w in self.words]
+
+
+def clue_scores(team: str, candidates: List[str], board: Board, model: KeyedVectors) -> Dict[str, float]:
+    """
+    Calculates a clue score for a list of candidates for a given team.
+    - This favors clues close to team's words, but penalizes for being close to other/assassin words.
+    - Returns a dict: candidate -> score (higher is better)
+    """
     scores = {}
+    # Get Word objects for each team
+    my_words = board.teams[team]
+    opposing = board.teams[Board.RED_TEAM if team == Board.BLUE_TEAM else Board.BLUE_TEAM]
+    assassin = board.teams[Board.ASSASSIN]
 
-    #set team and opposing team words
-    if team == "blue":
-        my_team = board.blue
-        opposing_team = board.red
-    else:
-        my_team = board.red
-        opposing_team = board.blue
-    
     for clue in candidates:
-        #calculate how similar to team words
-        team_similarity = sum(model.similarity(clue, word.word) for word in my_team)
-
-        #calculate how different from opposing words and assasain (using max similarity of all words)
-        max_non_team_similarity = max([model.similarity(clue, word.word) for word in opposing_team + board.black])
-
-        #scoring function
-        scores[clue] = team_similarity / (max_non_team_similarity + 1e-6)  # Avoid division by zero
-   
+        # Sum similarity to team words
+        team_score = sum(model.similarity(clue, w.word) for w in my_words)
+        # Penalize for closest similarity to opposing/assassin words
+        danger = max([model.similarity(clue, w.word) for w in opposing + assassin])
+        # The higher the team_score and the lower the danger, the better
+        scores[clue] = team_score / (danger + 1e-6)
     return scores
+
 
 def main():
     """
-    main method that runs program
+    Command-line driver for demonstrating spymaster clue generation using word2vec and Board logic.
+    1. Loads words and selects 25 for the game.
+    2. Configures board and assigns teams/colors.
+    3. Loads a pretrained word2vec model.
+    4. Interactively chooses spymaster team, computes clues, and prints best options.
     """
+    # --- Step 1: Load and shuffle words ---
     file_path = "words.txt"
     with open(file_path, "r") as file:
-        words = [line.strip() for line in file]
+        all_words = [line.strip() for line in file if line.strip()]
+    random_words = random.sample(all_words, 25)
 
-    #select 30 random words out of all words in txt (game only needs 25)
-    random_words = random.sample(words, 30)
-
+    # --- Step 2: Initialize board ---
     board = Board(random_words)
+    board.print_team_words()  # Debug print
 
-
-    # Path to the downloaded model
+    # --- Step 3: Load pretrained word2vec model ---
     model_path = "model.bin"
-
-    # Load the model (binary format)
+    print("Loading word2vec model (may take a while)...")
     word2vec = KeyedVectors.load_word2vec_format(model_path, binary=True)
 
-    #get input on which team to be spy master for
-    user_input = str(input("Red or Blue? ")).lower()
+    # --- Step 4: Let user pick a team for spymaster clue ---
+    user_choice = ""
+    while user_choice not in [Board.RED_TEAM, Board.BLUE_TEAM]:
+        user_choice = input("Which team are you giving clues for? (red/blue): ").strip().lower()
 
-    if user_input == "red":
-        team = [word.word for word in board.red]
-        board.print(board.red)
-    else:
-        team = [word.word for word in board.blue]
-        board.print(board.blue)
-    
-    #filter out words not in model vocab
-    valid_words = [word for word in team if word in word2vec.key_to_index]
-
-    if not valid_words:
-        print("No valid words from the team are present in the model's vocabulary.")
+    # --- Step 5: Get the words for that team, validate with the model's vocab ---
+    team_words = board.get_team_words(user_choice)
+    valid_team_words = [w for w in team_words if w in word2vec.key_to_index]
+    if not valid_team_words:
+        print("No valid team words in model vocabulary. Try again with different words.")
         return
 
-    # Get the most similar words for the valid team words
-    candidates = word2vec.most_similar(positive=valid_words, topn=200)
+    # --- Step 6: Collect candidate clues (from model, but not on board, and single words only) ---
+    # This uses the model's most_similar. You may replace this step with more advanced clue searching!
+    candidates = word2vec.most_similar(positive=valid_team_words, topn=200)
+    candidate_words = [w for w, _ in candidates if w not in board.get_all_board_words() and "_" not in w]
 
+    print(f"\nTop candidate clues (raw): {candidate_words[:10]}")
 
-    #a list of the candidate words which are not in board list of words
-    filtered_candidates = [word for word, _ in candidates if word not in board.list]
-    filtered_candidates = [word for word in filtered_candidates if "_" not in word]
-    print(filtered_candidates)
+    # --- Step 7: Score all clue candidates for best one ---
+    best_clue_scores = clue_scores(user_choice, candidate_words, board, word2vec)
+    best_clue = max(best_clue_scores, key=best_clue_scores.get)
 
-    #find best clue
-    best_clues = clue_scores(user_input, filtered_candidates, board, word2vec)
-    best_clue = max(best_clues)
+    # --- Step 8: Output for demonstration/debugging ---
+    print(f"\nBest clue for {user_choice.upper()}: '{best_clue}' (Score: {best_clue_scores[best_clue]:.4f})")
+    print("All scored clues (top 10):")
+    for clue in sorted(best_clue_scores, key=best_clue_scores.get, reverse=True)[:10]:
+        print(f"  {clue:15} {best_clue_scores[clue]:.4f}")
 
-    #display results
-    print(best_clue)
+    # --- Improvements Discussion: ---
+    print("""
+MODEL IMPROVEMENT TIPS:
+- Use more advanced heuristics to pick clues that link multiple team words but avoid accidental overlap with opponent/assassin words.
+- Employ banned clue filtering (e.g., for inflections/parts) and frequency heuristics to avoid rare or illegal clues.
+- Consider beam search, combinatorial search, or ensemble techniques for smarter clue choices.
+- Add tests to empirically evaluate risk/reward.
+- Try richer models (BERT, ConceptNet) for smarter context!
+""")
 
 if __name__ == "__main__":
     main()
-
-
